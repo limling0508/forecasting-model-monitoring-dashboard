@@ -16,7 +16,7 @@ if st.sidebar.button("Refresh logs"):
 
 # ---- Load logs (auto-refresh every 2 seconds) ----
 @st.cache_data(ttl=2)
-def load_logs(log_path: str):
+def load_logs(log_path: str) -> pd.DataFrame:
     if not os.path.exists(log_path):
         return pd.DataFrame()
 
@@ -111,6 +111,7 @@ with tab1:
             .set_index("timestamp_utc")[["units_sold_pred"]]
         )
         st.line_chart(trend)
+        st.caption("X-axis: timestamp_utc (when logs were recorded). Y-axis: predicted Units Sold.")
     else:
         st.info("No valid timestamp/prediction data to plot trend.")
 
@@ -129,36 +130,39 @@ with tab1:
     else:
         st.info("Missing columns for prediction distribution.")
 
-    st.subheader("Input Monitoring (Price & Discount%) — Histogram")
+    # ---- Top 30 charts (your preference) ----
+    st.subheader("Input Monitoring (Price & Discount%) — Top 30 Values")
     c1, c2 = st.columns(2)
 
     with c1:
         if "price" in filtered.columns and filtered["price"].notna().any():
-            st.write("Price histogram (bins=20)")
-            price_series = filtered["price"].dropna().astype(float)
-            price_bins = pd.cut(price_series, bins=20)
-            price_hist = price_bins.value_counts().sort_index()
-
-            price_df = price_hist.reset_index()
-            price_df.columns = ["bin", "count"]
-            price_df["bin"] = price_df["bin"].astype(str)  # IMPORTANT: Interval -> string
-
-            st.bar_chart(price_df.set_index("bin"))
+            st.write("Top 30 Price values (frequency)")
+            price_counts = (
+                filtered["price"]
+                .dropna()
+                .astype(float)
+                .round(2)
+                .value_counts()
+                .head(30)
+                .sort_index()
+            )
+            st.bar_chart(price_counts)
         else:
             st.info("No price data available.")
 
     with c2:
         if "discount_pct" in filtered.columns and filtered["discount_pct"].notna().any():
-            st.write("Discount% histogram (bins=20)")
-            disc_series = filtered["discount_pct"].dropna().astype(float)
-            disc_bins = pd.cut(disc_series, bins=20)
-            disc_hist = disc_bins.value_counts().sort_index()
-
-            disc_df = disc_hist.reset_index()
-            disc_df.columns = ["bin", "count"]
-            disc_df["bin"] = disc_df["bin"].astype(str)  # IMPORTANT: Interval -> string
-
-            st.bar_chart(disc_df.set_index("bin"))
+            st.write("Top 30 Discount% values (frequency)")
+            disc_counts = (
+                filtered["discount_pct"]
+                .dropna()
+                .astype(float)
+                .round(2)
+                .value_counts()
+                .head(30)
+                .sort_index()
+            )
+            st.bar_chart(disc_counts)
         else:
             st.info("No discount% data available.")
 
