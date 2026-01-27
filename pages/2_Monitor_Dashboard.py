@@ -1,4 +1,4 @@
-# monitor_dashboard.py
+# pages/2_Monitor_Dashboard.py
 import os
 import pandas as pd
 import streamlit as st
@@ -8,13 +8,19 @@ from log_utils import LOG_PATH
 st.set_page_config(page_title="Model Monitoring & Feedback", layout="wide")
 st.title("Model Monitoring & Feedback Dashboard")
 
+# ---- Manual refresh (solves caching not updating) ----
+st.sidebar.header("Controls")
+if st.sidebar.button("Refresh logs"):
+    st.cache_data.clear()
+    st.rerun()
 
-@st.cache_data
-def load_logs():
-    if not os.path.exists(LOG_PATH):
+# ---- Load logs (auto-refresh every 2 seconds) ----
+@st.cache_data(ttl=2)
+def load_logs(log_path: str):
+    if not os.path.exists(log_path):
         return pd.DataFrame()
 
-    df = pd.read_csv(LOG_PATH)
+    df = pd.read_csv(log_path)
 
     # Parse timestamp
     if "timestamp_utc" in df.columns:
@@ -27,14 +33,15 @@ def load_logs():
     return df
 
 
-logs = load_logs()
+logs = load_logs(str(LOG_PATH))
 
 # Handle "no logs yet"
 if logs.empty:
     st.warning(
         "No monitoring logs found yet. "
-        "Run the prediction app and submit feedback at least once, then refresh this page."
+        "Run the prediction app and submit feedback at least once, then click **Refresh logs**."
     )
+    st.info(f"Looking for logs at: {LOG_PATH}")
     st.stop()
 
 # ---------- Sidebar Filters ----------
@@ -46,7 +53,9 @@ if "product_category" in logs.columns:
 if "customer_segment" in logs.columns:
     logs["customer_segment"] = logs["customer_segment"].astype(str).str.strip().str.title()
 
-models = ["All"] + sorted(logs["model_version"].dropna().unique().tolist())
+models = ["All"]
+if "model_version" in logs.columns:
+    models += sorted(logs["model_version"].dropna().unique().tolist())
 selected_model = st.sidebar.selectbox("Model version", models)
 
 # Fixed dropdown options
@@ -57,11 +66,11 @@ selected_category = st.sidebar.selectbox("Product category", category_options)
 selected_segment = st.sidebar.selectbox("Customer segment", segment_options)
 
 filtered = logs.copy()
-if selected_model != "All":
+if selected_model != "All" and "model_version" in filtered.columns:
     filtered = filtered[filtered["model_version"] == selected_model]
-if selected_category != "All":
+if selected_category != "All" and "product_category" in filtered.columns:
     filtered = filtered[filtered["product_category"] == selected_category]
-if selected_segment != "All":
+if selected_segment != "All" and "customer_segment" in filtered.columns:
     filtered = filtered[filtered["customer_segment"] == selected_segment]
 
 # ---------- Key Metrics ----------
@@ -92,14 +101,18 @@ tab1, tab2, tab3 = st.tabs(["Monitoring Overview", "Feedback Analysis", "Raw Log
 # ---------- TAB 1: Monitoring Overview ----------
 with tab1:
     st.subheader("Prediction Trend Over Time")
-    if "timestamp_utc" in filtered.columns and filtered["timestamp_utc"].notna().any():
+    if (
+        "timestamp_utc" in filtered.columns
+        and "units_sold_pred" in filtered.columns
+        and filtered["timestamp_utc"].notna().any()
+    ):
         trend = (
             filtered.dropna(subset=["timestamp_utc"])
             .set_index("timestamp_utc")[["units_sold_pred"]]
         )
         st.line_chart(trend)
     else:
-        st.info("No valid timestamps to plot trend.")
+        st.info("No valid timestamp/prediction data to plot trend.")
 
     st.subheader("Predicted Units Sold Distribution (by Model Version)")
     if "model_version" in filtered.columns and "units_sold_pred" in filtered.columns:
@@ -116,18 +129,36 @@ with tab1:
     else:
         st.info("Missing columns for prediction distribution.")
 
-    st.subheader("Input Monitoring (Price & Discount%)")
+    st.subheader("Input Monitoring (Price & Discount%) — Histogram")
     c1, c2 = st.columns(2)
+
     with c1:
         if "price" in filtered.columns and filtered["price"].notna().any():
-            st.write("Price distribution (top 30 values)")
-            st.bar_chart(filtered["price"].value_counts().sort_index().head(30))
+            st.write("Price histogram (bins=20)")
+            price_hist = (
+                filtered["price"]
+                .dropna()
+                .astype(float)
+                .pipe(lambda s: pd.cut(s, bins=20))
+                .value_counts()
+                .sort_index()
+            )
+            st.bar_chart(price_hist)
         else:
             st.info("No price data available.")
+
     with c2:
         if "discount_pct" in filtered.columns and filtered["discount_pct"].notna().any():
-            st.write("Discount% distribution (top 30 values)")
-            st.bar_chart(filtered["discount_pct"].value_counts().sort_index().head(30))
+            st.write("Discount% histogram (bins=20)")
+            disc_hist = (
+                filtered["discount_pct"]
+                .dropna()
+                .astype(float)
+                .pipe(lambda s: pd.cut(s, bins=20))
+                .value_counts()
+                .sort_index()
+            )
+            st.bar_chart(disc_hist)
         else:
             st.info("No discount% data available.")
 
@@ -136,48 +167,46 @@ with tab1:
     # ---------- Model Comparison: Latency + MAE ----------
     st.subheader("Model Comparison: Avg Latency and MAE")
 
-    metrics_rows = []
+    if "model_version" not in filtered.columns:
+        st.info("model_version column not found, cannot compare models.")
+    else:
+        metrics_rows = []
+        for mv in sorted(filtered["model_version"].dropna().unique()):
+            sub_all = filtered[filtered["model_version"] == mv].copy()
 
-    for mv in sorted(filtered["model_version"].dropna().unique()):
-        sub_all = filtered[filtered["model_version"] == mv].copy()
+            avg_latency = None
+            if "latency_ms" in sub_all.columns and sub_all["latency_ms"].notna().any():
+                avg_latency = sub_all["latency_ms"].mean()
 
-        avg_latency = None
-        if "latency_ms" in sub_all.columns and sub_all["latency_ms"].notna().any():
-            avg_latency = sub_all["latency_ms"].mean()
+            mae = None
+            if "actual_units_sold" in sub_all.columns and "units_sold_pred" in sub_all.columns:
+                sub_eval = sub_all.dropna(subset=["actual_units_sold", "units_sold_pred"]).copy()
 
-        # MAE only when actual is available
-        mae = None
-        if "actual_units_sold" in sub_all.columns and "units_sold_pred" in sub_all.columns:
-            sub_eval = sub_all.dropna(subset=["actual_units_sold", "units_sold_pred"]).copy()
+                if not sub_eval.empty:
+                    if "abs_error" in sub_eval.columns and sub_eval["abs_error"].notna().any():
+                        mae = sub_eval["abs_error"].mean()
+                    else:
+                        mae = (sub_eval["actual_units_sold"] - sub_eval["units_sold_pred"]).abs().mean()
 
-            if not sub_eval.empty:
-                # Prefer precomputed abs_error if present
-                if "abs_error" in sub_eval.columns and sub_eval["abs_error"].notna().any():
-                    mae = sub_eval["abs_error"].mean()
-                else:
-                    mae = (sub_eval["actual_units_sold"] - sub_eval["units_sold_pred"]).abs().mean()
+            metrics_rows.append(
+                {"model_version": mv, "avg_latency_ms": avg_latency, "MAE": mae}
+            )
 
-        metrics_rows.append({
-            "model_version": mv,
-            "avg_latency_ms": avg_latency,
-            "MAE": mae
-        })
-
-    metrics_table = pd.DataFrame(metrics_rows).set_index("model_version")
-
-    st.dataframe(
-        metrics_table.style.format({
-            "avg_latency_ms": lambda x: "N/A" if pd.isna(x) else f"{x:.2f}",
-            "MAE": lambda x: "N/A" if pd.isna(x) else f"{x:.2f}",
-        })
-    )
-
-    st.caption("Note: MAE is shown only when Actual Units Sold values have been logged.")
+        metrics_table = pd.DataFrame(metrics_rows).set_index("model_version")
+        st.dataframe(
+            metrics_table.style.format(
+                {
+                    "avg_latency_ms": lambda x: "N/A" if pd.isna(x) else f"{x:.2f}",
+                    "MAE": lambda x: "N/A" if pd.isna(x) else f"{x:.2f}",
+                }
+            )
+        )
+        st.caption("Note: MAE is shown only when Actual Units Sold values have been logged.")
 
 # ---------- TAB 2: Feedback Analysis ----------
 with tab2:
     st.subheader("Average Feedback Score by Model Version")
-    if "feedback_score" in logs.columns:
+    if "feedback_score" in logs.columns and "model_version" in logs.columns:
         fb = logs.groupby("model_version")["feedback_score"].mean().reset_index()
         fb = fb.dropna(subset=["feedback_score"])
 
@@ -186,7 +215,7 @@ with tab2:
         else:
             st.bar_chart(fb.set_index("model_version"))
     else:
-        st.info("feedback_score column not found in logs.")
+        st.info("feedback_score/model_version column not found in logs.")
 
     st.subheader("Recent Comments")
     if "feedback_text" in logs.columns:
@@ -202,7 +231,9 @@ with tab2:
         else:
             for _, row in comments.iterrows():
                 ts = row.get("timestamp_utc", "")
-                st.write(f"**[{ts}] {row.get('model_version', '')} – Score: {row.get('feedback_score', 'N/A')}**")
+                st.write(
+                    f"**[{ts}] {row.get('model_version', '')} – Score: {row.get('feedback_score', 'N/A')}**"
+                )
                 st.write(row["feedback_text"])
                 st.markdown("---")
     else:
