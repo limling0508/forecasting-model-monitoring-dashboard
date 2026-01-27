@@ -3,22 +3,26 @@ from sklearn.model_selection import train_test_split
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.pipeline import Pipeline
-from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error, r2_score
 import joblib
 
 # Load dataset
 df = pd.read_csv("sales.csv")
 
-# Basic cleaning (safe defaults)
-needed = ["Price", "Discount", "Marketing_Spend", "Product_Category", "Customer_Segment", "Units_Sold"]
+# Basic cleaning
+needed = ["Price", "Discount", "Product_Category", "Customer_Segment", "Units_Sold"]
 df = df.dropna(subset=needed)
+
+# Ensure categorical columns are strings (avoids dtype issues)
+df["Product_Category"] = df["Product_Category"].astype(str)
+df["Customer_Segment"] = df["Customer_Segment"].astype(str)
 
 # Discount is in %, create effective price after discount
 df["net_price"] = df["Price"] * (1 - df["Discount"] / 100)
 
 # Features and target
-numeric_features = ["net_price", "Discount", "Marketing_Spend"]
+numeric_features = ["net_price", "Discount"]
 categorical_features = ["Product_Category", "Customer_Segment"]
 
 X = df[numeric_features + categorical_features]
@@ -32,10 +36,15 @@ preprocess = ColumnTransformer(
     ]
 )
 
-# v2 pipeline
+# v2 pipeline (ONLY model changed)
 model_v2 = Pipeline(steps=[
     ("preprocess", preprocess),
-    ("model", LinearRegression())
+    ("model", GradientBoostingRegressor(
+        random_state=42,
+        n_estimators=300,
+        learning_rate=0.05,
+        max_depth=3
+    ))
 ])
 
 # Train-test split (same settings as v1 for fair comparison)
@@ -46,7 +55,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 # Train model
 model_v2.fit(X_train, y_train)
 
-# Evaluate (minimal)
+# Evaluate
 y_pred = model_v2.predict(X_test)
 mae = mean_absolute_error(y_test, y_pred)
 r2 = r2_score(y_test, y_pred)
@@ -57,3 +66,4 @@ print(f"[v2] R2:  {r2:.2f}")
 # Save model
 joblib.dump(model_v2, "units_sold_model_v2.pkl")
 print("Saved: units_sold_model_v2.pkl")
+

@@ -1,8 +1,6 @@
 venv/
 __pycache__/
 *.pyc
-.env
-.DS_Store
-*.csv
-!sales.csv
+monitoring_logs.csv
 *.pkl
+sales.csv
