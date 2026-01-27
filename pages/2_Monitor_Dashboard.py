@@ -135,30 +135,30 @@ with tab1:
     with c1:
         if "price" in filtered.columns and filtered["price"].notna().any():
             st.write("Price histogram (bins=20)")
-            price_hist = (
-                filtered["price"]
-                .dropna()
-                .astype(float)
-                .pipe(lambda s: pd.cut(s, bins=20))
-                .value_counts()
-                .sort_index()
-            )
-            st.bar_chart(price_hist)
+            price_series = filtered["price"].dropna().astype(float)
+            price_bins = pd.cut(price_series, bins=20)
+            price_hist = price_bins.value_counts().sort_index()
+
+            price_df = price_hist.reset_index()
+            price_df.columns = ["bin", "count"]
+            price_df["bin"] = price_df["bin"].astype(str)  # IMPORTANT: Interval -> string
+
+            st.bar_chart(price_df.set_index("bin"))
         else:
             st.info("No price data available.")
 
     with c2:
         if "discount_pct" in filtered.columns and filtered["discount_pct"].notna().any():
             st.write("Discount% histogram (bins=20)")
-            disc_hist = (
-                filtered["discount_pct"]
-                .dropna()
-                .astype(float)
-                .pipe(lambda s: pd.cut(s, bins=20))
-                .value_counts()
-                .sort_index()
-            )
-            st.bar_chart(disc_hist)
+            disc_series = filtered["discount_pct"].dropna().astype(float)
+            disc_bins = pd.cut(disc_series, bins=20)
+            disc_hist = disc_bins.value_counts().sort_index()
+
+            disc_df = disc_hist.reset_index()
+            disc_df.columns = ["bin", "count"]
+            disc_df["bin"] = disc_df["bin"].astype(str)  # IMPORTANT: Interval -> string
+
+            st.bar_chart(disc_df.set_index("bin"))
         else:
             st.info("No discount% data available.")
 
@@ -188,9 +188,7 @@ with tab1:
                     else:
                         mae = (sub_eval["actual_units_sold"] - sub_eval["units_sold_pred"]).abs().mean()
 
-            metrics_rows.append(
-                {"model_version": mv, "avg_latency_ms": avg_latency, "MAE": mae}
-            )
+            metrics_rows.append({"model_version": mv, "avg_latency_ms": avg_latency, "MAE": mae})
 
         metrics_table = pd.DataFrame(metrics_rows).set_index("model_version")
         st.dataframe(
@@ -243,4 +241,3 @@ with tab2:
 with tab3:
     st.subheader("Raw Monitoring Logs")
     st.dataframe(filtered)
-
