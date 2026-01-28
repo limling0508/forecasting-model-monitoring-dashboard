@@ -244,4 +244,47 @@ with tab2:
 # ---------- TAB 3: Raw Logs ----------
 with tab3:
     st.subheader("Raw Monitoring Logs")
-    st.dataframe(filtered)
+
+    # Show where the app is reading logs from
+    st.caption(f"Log file path: {LOG_PATH}")
+
+    # Quick status
+    if os.path.exists(str(LOG_PATH)):
+        st.write(f"File exists | Size: {os.path.getsize(str(LOG_PATH))} bytes")
+    else:
+        st.warning("Log file does not exist yet. Submit feedback in the Prediction page first.")
+        st.stop()
+
+    # Search / filter in raw logs
+    st.markdown("### Quick Filters")
+    c1, c2 = st.columns(2)
+
+    with c1:
+        search_text = st.text_input("Search text (checks all columns)", "")
+    with c2:
+        max_rows = st.number_input("Show last N rows", min_value=10, max_value=5000, value=200, step=10)
+
+    view_df = filtered.copy()
+
+    # Search across all columns (string match)
+    if search_text.strip():
+        mask = view_df.astype(str).apply(lambda row: row.str.contains(search_text, case=False, na=False)).any(axis=1)
+        view_df = view_df[mask]
+
+    # Show latest first
+    if "timestamp_utc" in view_df.columns:
+        view_df = view_df.sort_values("timestamp_utc", ascending=False)
+
+    view_df = view_df.tail(int(max_rows))
+
+    st.dataframe(view_df, use_container_width=True)
+
+    # Download button (important for Streamlit Cloud persistence)
+    csv_bytes = view_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="Download CSV (current view)",
+        data=csv_bytes,
+        file_name="monitoring_logs.csv",
+        mime="text/csv",
+    )
+
